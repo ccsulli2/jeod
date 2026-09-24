@@ -313,8 +313,41 @@ void GravityControls::calc_spherical(const double integ_pos[3],
         // Issue: Does the 3rd body effect also apply to potential?
         // pot += mu_local * r_dot_rho / rho_3rd;
 
+        // The Earth-Moon barycenter accelerates as the mu-weighted average
+        // of Earth and Moon, not as a test particle at the barycenter.
+        // Use the direct calculation here; Battin's point-origin formula
+        // does not apply to the weighted pair.
+        if(grav_source_frame.ref_frame->get_name() == "EMBary.inertial")
+        {
+            const GravitySource * earth = grav_manager->find_grav_source("Earth");
+            const GravitySource * moon = grav_manager->find_grav_source("Moon");
+            if(earth == nullptr || moon == nullptr || earth->inertial == nullptr || moon->inertial == nullptr ||
+               earth->mu + moon->mu <= 0.0)
+            {
+                MessageHandler::fail(__FILE__,
+                                     __LINE__,
+                                     GravityMessages::missing_entry,
+                                     "Earth and Moon gravity sources are required for EMBary third-body gravity.");
+                return;
+            }
+
+            Vector3::scale(posn, -mu_local / r_3rd, acc_local);
+            const double total_mu = earth->mu + moon->mu;
+            const GravitySource * constituents[2] = {earth, moon};
+            for(const GravitySource * constituent : constituents)
+            {
+                double source_to_constituent[3];
+                constituent->inertial->compute_position_from(*(body->inertial), source_to_constituent);
+                const double dist_sq = Vector3::vmagsq(source_to_constituent);
+                const double dist_cubed = dist_sq * std::sqrt(dist_sq);
+                Vector3::scale_incr(source_to_constituent,
+                                    (constituent->mu / total_mu) * mu_local / dist_cubed,
+                                    acc_local);
+            }
+        }
+
         // Battin's method: See writeup.
-        if(battin_method)
+        else if(battin_method)
         {
             // Note that grav_source_frame.pos is used in place of the rho listed in the documentation.
             // This is noteworthy because grav_source_frame.pos is directionally opposite of rho.
